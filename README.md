@@ -267,8 +267,8 @@ If the frontend is a static site (for example a React/Vue single-page app built 
  
 - [ ] Run failure drills (terminate an instance, simulate AZ failure, trigger RDS failover) and document recovery times
 - [ ] Rebuild the environment with Terraform
-- [ ] Migrate the frontend to S3 + CloudFront and decommission the presentation tier
-- [ ] One NAT Gateway per AZ
+- [X] Migrate the frontend to S3 + CloudFront and decommission the presentation tier [3-tier-improvements](./HA_Presentation_Improvements.md)
+- [X] One NAT Gateway per AZ [3-tier-improvements](./HA_Presentation_Improvements.md)
 - [ ] Replace the Bastion host with SSM Session Manager
 - [ ] Add a CI/CD pipeline
  
