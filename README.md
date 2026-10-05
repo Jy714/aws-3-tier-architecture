@@ -210,6 +210,35 @@ One possible difference is request volume: WAF on CloudFront inspects every view
 - One Web ACL is enough. For CloudFront, create it with scope `CLOUDFRONT` in **us-east-1**.
 - Attach it to the presentation ALB instead only if CloudFront is not used and users hit the ALB directly.
 
+### 10. Which metrics should drive Auto Scaling for each tier?
+ 
+Both ASGs use **target tracking** scaling policies instead of hand-written step scaling. A target value is set, and the ASG creates and manages the CloudWatch alarms and adjusts the instance count automatically.
+ 
+| Tier         | Primary metric             | Target value          | Why                                                                                                                            |
+| ------------ | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Presentation | `ALBRequestCountPerTarget` | Set from load testing | The frontend is usually lightweight, so CPU can stay low even under heavy request volume. Request count reflects the real load |
+| Application  | `ASGAverageCPUUtilization` | 50 to 60%             | Business logic is typically CPU-bound, so CPU is the most direct signal                                                        |
+ 
+Notes:
+ 
+- One ASG can have multiple target tracking policies, for example CPU and `ALBRequestCountPerTarget` on the application tier. Scale-out happens if **any** metric exceeds its target, and scale-in only when **all** metrics are below target, which is the safer behavior.
+- With CloudFront in front, only cache misses reach the ALB, so `ALBRequestCountPerTarget` measures the load that actually hits the origin.
+**Choosing the target value:** load test a single instance (k6, JMeter, or ab), find the requests per instance at roughly 60 to 70% CPU, and use that number (with some headroom) as the `ALBRequestCountPerTarget` target. Without load test data, start with 50 to 60% CPU and tune from observed behavior.
+ 
+**Metrics not suited for scaling:**
+ 
+- **Memory:** not a default metric and requires the CloudWatch Agent. Use it as a custom metric only if the application is memory-bound.
+- **Latency and 5xx errors:** too noisy, and scaling out does not necessarily fix them (the cause may be a slow database or a bug). Better used for CloudWatch alarms and SNS notifications.
+- **Database metrics:** an ASG controls EC2 count, not database capacity.
+- **Network in/out:** only relevant for workloads that move large files.
+**Supporting settings:**
+ 
+- **Min = 2 and an explicit Max.** Min 2 keeps at least one instance per AZ. A Max cap prevents runaway cost during traffic spikes or attacks.
+- **Account for database connections on the application tier.** More instances means more connections, and RDS has a `max_connections` limit. Check connection pool settings before raising Max, and consider RDS Proxy.
+- **Use ELB health checks** rather than EC2-only checks, so an instance with a failed application is replaced even if the machine is still running. Set a health check grace period long enough for startup.
+- **Set instance warmup** to the real time an instance needs before it can take traffic, so new instances do not skew the metric and trigger repeated scale-out.
+- Scale-in is slower than scale-out by design in target tracking and does not need to be tuned aggressively.
+
 ## Possible Improvements
  
 ### 1. Remove the presentation tier: host the frontend on S3 + CloudFront
