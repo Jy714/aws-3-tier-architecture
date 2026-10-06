@@ -114,6 +114,154 @@ Private application subnets reach the internet (patches, external APIs) via **NA
 - **Amazon SNS** sends an email when an alarm fires.
 
 ---
+### 3.6 Design Considerations
+
+#### 3.6.1 Protecting the Application ALB from Direct Internet Attacks
+
+Because the Application ALB is Internet-facing, it should be protected from malicious traffic and from clients attempting to bypass the intended CloudFront entry point.
+
+Two complementary approaches can be used:
+
+**Solution 1 — CloudFront + AWS WAF**
+
+* Place **AWS WAF** in front of CloudFront.
+* WAF inspects incoming HTTP/HTTPS requests and can block common web attacks, malicious IP addresses, and excessive request rates.
+* This allows malicious traffic to be filtered before it reaches the application infrastructure.
+
+**Solution 2 — Restrict ALB Access to CloudFront**
+
+* Configure the **Application ALB Security Group** to allow inbound HTTPS traffic only from CloudFront.
+* Do not manually hard-code individual CloudFront IP addresses; use the appropriate AWS-managed CloudFront prefix list where applicable.
+* This prevents users from bypassing CloudFront and directly sending requests to the ALB.
+
+The recommended design is to use **both solutions together**:
+
+```text
+Internet
+    │
+    ▼
+CloudFront
+    │
+    ▼
+AWS WAF
+    │
+    ▼
+Application ALB
+    │
+    ▼
+Application ASG
+```
+
+The ALB Security Group should only allow traffic from the intended CloudFront source.
+
+This provides two layers of protection:
+
+* **WAF** → filters and inspects HTTP/HTTPS requests.
+* **Security Group** → prevents direct access to the ALB from unauthorized sources.
+
+---
+
+#### 3.6.2 Reducing Bastion Host Cost While Maintaining Availability
+
+Running a dedicated Bastion host in every Availability Zone provides strong availability, but it also increases infrastructure cost. The architecture can reduce the number of running Bastion instances while still providing cross-AZ recovery.
+
+**Solution 1 — Cross-AZ Bastion Auto Scaling**
+
+Instead of permanently running one Bastion host in every AZ, place the Bastion hosts under an **Auto Scaling group** spanning multiple Availability Zones.
+
+Example configuration:
+
+```text
+Minimum capacity: 1
+Desired capacity: 1
+Maximum capacity: 2
+```
+
+Under normal conditions, only one Bastion host is running:
+
+```text
+AZ A
+ └── Bastion
+```
+
+If the Bastion instance fails, the Auto Scaling group can launch a replacement. If the Availability Zone becomes unavailable, the Auto Scaling group can launch the Bastion in another configured AZ.
+
+The main benefit is that only one Bastion instance normally needs to run, reducing cost while still providing cross-AZ recovery.
+
+The trade-off is that there may be a short recovery period when the Bastion host or its Availability Zone fails.
+
+---
+
+**Solution 2 — EIP Failover Between Bastion Hosts**
+
+Another approach is to maintain Bastion capacity across multiple Availability Zones while using a single Elastic IP as the stable administrative entry point.
+
+For example:
+
+```text
+                Elastic IP
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+       Bastion A           Bastion B
+        AZ A                 AZ B
+```
+
+If Bastion A fails:
+
+```text
+Bastion A
+    ↓
+Failure detected
+    ↓
+EventBridge / CloudWatch Event
+    ↓
+Lambda
+    ↓
+Associate Elastic IP with Bastion B
+    ↓
+Bastion B becomes the active administrative endpoint
+```
+
+This allows the administrator to continue using the same public IP address while the active Bastion host changes between Availability Zones.
+
+However, this approach introduces additional components and operational complexity, including EventBridge, Lambda, EIP reassociation and failover logic. Therefore, it is more complex than simply using a cross-AZ Auto Scaling group.
+
+For a production architecture, **AWS Systems Manager Session Manager** can also be considered as an alternative to Bastion hosts, eliminating the need for a publicly accessible administrative server altogether.
+
+---
+**Solution 3 — Replace Bastion Hosts with AWS Systems Manager Session Manager**
+
+Instead of maintaining Bastion hosts, administrators can use **AWS Systems Manager Session Manager** to access EC2 instances directly without requiring a public Bastion host.
+
+The architecture becomes:
+
+```text
+Administrator
+      │
+      ▼
+AWS Systems Manager
+   Session Manager
+      │
+      ▼
+Private EC2 Instances
+```
+
+The application instances can remain in private subnets with **no public IP addresses**.
+
+**Benefits:**
+
+* **Lower cost** — No Bastion EC2 instances or Bastion-related Elastic IPs are required.
+* **Smaller attack surface** — No publicly accessible SSH server is required.
+* **No inbound SSH port** — Port 22 does not need to be exposed to the internet.
+* **Simpler architecture** — Eliminates the need to maintain Bastion hosts across multiple Availability Zones.
+* **No Bastion HA management** — There is no need for Bastion Auto Scaling, EIP failover, or Lambda-based failover logic.
+* **Private infrastructure remains private** — Administrators can access private EC2 instances without giving them public IP addresses.
+* **Centralized access control** — Access can be controlled using IAM policies and permissions.
+* **Better auditability** — Session Manager can integrate with AWS logging services to record and monitor administrative sessions.
+
+For this architecture, **Session Manager is the preferred solution when direct SSH access through a Bastion host is not required**. It provides administrative access while keeping the application infrastructure private and reducing both infrastructure cost and operational complexity.
+
 
 ## 4. Summary of changes
 
@@ -125,3 +273,4 @@ Private application subnets reach the internet (patches, external APIs) via **NA
 6. Application and database tiers are fully private; the database has no internet route.
 7. CloudWatch + SNS provide monitoring and email alerts.
 8. IAM provides machine authentication.
+9. Bastion hosts can be replaced with AWS Systems Manager Session Manager to reduce cost, eliminate public SSH access, reduce the attack surface, and simplify cross-AZ administration.
