@@ -268,7 +268,5 @@ If the frontend is a static site (for example a React/Vue single-page app built 
 - [X] Migrate the frontend to S3 + CloudFront and decommission the presentation tier [3-tier-improvements](./HA_Presentation_Improvements.md)
 - [X] One NAT Gateway per AZ [3-tier-improvements](./HA_Presentation_Improvements.md)
 - [X] Replace the Bastion host with SSM Session Manager [3-tier-improvements](./HA_Presentation_Improvements.md)
-- [ ] Setup using Terraform (IaC)
-- [ ] Add a CI/CD pipeline
  
 **Feedback and suggestions are always welcome. If you spot any mistakes or have ideas for improvement, feel free to let me know.**
